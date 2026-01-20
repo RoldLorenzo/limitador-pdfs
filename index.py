@@ -1,5 +1,8 @@
-from pdf_compressor import PdfCompressor
+import pdf
 
 if __name__ == "__main__":
-    compressor = PdfCompressor("teste.pdf")
-    compressor.save_compressed_file("out.pdf")
+    input = "teste.pdf"
+
+    document_bytes = pdf.compressed(input)
+    with open("out_bytes.pdf", "wb") as file:
+        file.write(document_bytes)
