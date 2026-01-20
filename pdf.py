@@ -27,6 +27,9 @@ def compressed(
 
             image = Image.open(BytesIO(image_bytes))
 
+            if image.mode not in ("RGB", "L"):
+                image = image.convert("RGB")
+
             if dpi:
                 scale = dpi / 300
                 new_size = (
