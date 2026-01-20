@@ -1,6 +1,25 @@
 import fitz
+import os
 from PIL import Image
 from io import BytesIO
+
+
+def save_compressed_file(pdf_path: str) -> str:
+    compressed_bytes = compressed(pdf_path)
+
+    directory, filename = os.path.split(pdf_path)
+    name, ext = os.path.splitext(filename)
+
+    new_filename = f"{name}_compressed{ext}"
+
+    output_path = os.path.join(directory, new_filename)
+
+    with open(output_path, "wb") as file:
+        file.write(compressed_bytes)
+
+    # TODO: chopp up the file if still greater than limit
+
+    return output_path
 
 
 def compressed(
