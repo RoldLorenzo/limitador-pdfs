@@ -3,6 +3,7 @@ import requests
 import os
 from dotenv import load_dotenv
 from pathlib import Path
+from typing import Optional
 
 MAX_PDF_LIMIT = 5
 
@@ -10,22 +11,26 @@ MAX_PDF_LIMIT = 5
 # saves it compressed in the same folder as <file_name>_compressed.pdf if compressing it is sufficient to be under the limt.
 # creates a folder with the sliced compressed pdf such that each slice is under the limit.
 
+# Returns the path where the result was saved
 
-def save_compressed_files(input_path: str) -> None:
+
+def save_compressed_files(input_path: str) -> str:
     directory, filename = os.path.split(input_path)
     name, ext = os.path.splitext(filename)
-
-    new_filename = f"{name}_compressed{ext}"
-
-    output_path = os.path.join(directory, new_filename)
 
     compressed_bytes = compress(input_path)
 
     if len(compressed_bytes) > MAX_PDF_LIMIT * 1024 * 1024:
-        save_split_pdf(compressed_bytes, MAX_PDF_LIMIT)
+        save_split_pdf(compressed_bytes, MAX_PDF_LIMIT, name)
+        return directory + "/output"
     else:
+        new_filename = f"{name}_compressed{ext}"
+
+        output_path = os.path.join(directory, new_filename)
         with open(output_path, "wb") as f:
             f.write(compressed_bytes)
+
+        return output_path
 
 
 # Creates a folder named <output_dir> and saves the sliced files inside it.
@@ -34,10 +39,14 @@ def save_compressed_files(input_path: str) -> None:
 def save_split_pdf(
     pdf_bytes: bytes,
     max_size_mb: float,
-    output_dir: str = "output",
+    file_name: str,
+    output_dir: Optional[str] = None,
 ) -> None:
     max_size_bytes = int(max_size_mb * 1024 * 1024)
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+    if output_dir is None:
+        output_dir = file_name
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -56,7 +65,7 @@ def save_split_pdf(
         if current_size > max_size_bytes:
             current_doc.delete_page(-1)
 
-            output_path = output_dir / f"parte_{part}.pdf"
+            output_path = output_dir / f"{file_name}_{part}.pdf"
             current_doc.save(output_path)
             current_doc.close()
 
@@ -66,7 +75,7 @@ def save_split_pdf(
             current_doc.insert_pdf(doc, from_page=page_index, to_page=page_index)
 
     if current_doc.page_count > 0:
-        output_path = output_dir / f"parte_{part}.pdf"
+        output_path = output_dir / f"{file_name}_{part}.pdf"
         current_doc.save(output_path)
         current_doc.close()
 
@@ -79,7 +88,7 @@ def save_split_pdf(
 def compress(input_path: str) -> bytes:
     load_dotenv()
 
-    PUBLIC_KEY = os.getenv("ASTREA_LOGIN")
+    PUBLIC_KEY = os.getenv("PUBLIC_KEY")
     assert PUBLIC_KEY is not None
 
     r = requests.post(
