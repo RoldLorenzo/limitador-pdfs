@@ -1,6 +1,6 @@
 from tkinterdnd2 import TkinterDnD, DND_FILES
 import customtkinter as ctk
-from pdf import save_compressed_file
+from pdf import save_compressed_files
 
 
 class App:
@@ -84,7 +84,7 @@ class App:
             return
 
         try:
-            output_path = save_compressed_file(self.nome_arq)
+            output_path = save_compressed_files(self.nome_arq)
             self.success_msg = f"Arquivo salvo em {output_path}"
             self.error_msg = None
         except Exception as e:

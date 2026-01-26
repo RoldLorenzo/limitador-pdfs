@@ -1,82 +1,149 @@
 import fitz
+import requests
 import os
-from PIL import Image
-from io import BytesIO
+from dotenv import load_dotenv
+from pathlib import Path
+
+MAX_PDF_LIMIT = 5
+
+# Receives the path to a pdf file and a limit in MB and:
+# saves it compressed in the same folder as <file_name>_compressed.pdf if compressing it is sufficient to be under the limt.
+# creates a folder with the sliced compressed pdf such that each slice is under the limit.
 
 
-def save_compressed_file(pdf_path: str) -> str:
-    compressed_bytes = compressed(pdf_path)
-
-    directory, filename = os.path.split(pdf_path)
+def save_compressed_files(input_path: str) -> None:
+    directory, filename = os.path.split(input_path)
     name, ext = os.path.splitext(filename)
 
     new_filename = f"{name}_compressed{ext}"
 
     output_path = os.path.join(directory, new_filename)
 
-    with open(output_path, "wb") as file:
-        file.write(compressed_bytes)
+    compressed_bytes = compress(input_path)
 
-    # TODO: chopp up the file if still greater than limit
+    if len(compressed_bytes) > MAX_PDF_LIMIT * 1024 * 1024:
+        save_split_pdf(compressed_bytes, MAX_PDF_LIMIT)
+    else:
+        with open(output_path, "wb") as f:
+            f.write(compressed_bytes)
 
-    return output_path
+
+# Creates a folder named <output_dir> and saves the sliced files inside it.
 
 
-def compressed(
-    pdf_path: str,
-    dpi: int = 150,
-    quality: int = 50,
-) -> bytes:
-    doc = fitz.open(pdf_path)
-    processed_xrefs = set()
+def save_split_pdf(
+    pdf_bytes: bytes,
+    max_size_mb: float,
+    output_dir: str = "output",
+) -> None:
+    max_size_bytes = int(max_size_mb * 1024 * 1024)
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
 
-    for page in doc:
-        images = page.get_images(full=True)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-        for img in images:
-            xref = img[0]
+    part = 1
+    current_doc = fitz.open()
 
-            if xref in processed_xrefs:
-                continue
+    for page_index in range(doc.page_count):
+        current_doc.insert_pdf(doc, from_page=page_index, to_page=page_index)
 
-            processed_xrefs.add(xref)
+        if current_doc.page_count == 1:
+            continue
 
-            base_image = doc.extract_image(xref)
-            image_bytes = base_image["image"]
+        current_size = len(current_doc.tobytes())
 
-            image = Image.open(BytesIO(image_bytes))
+        if current_size > max_size_bytes:
+            current_doc.delete_page(-1)
 
-            if image.mode not in ("RGB", "L"):
-                image = image.convert("RGB")
+            output_path = output_dir / f"parte_{part}.pdf"
+            current_doc.save(output_path)
+            current_doc.close()
 
-            if dpi:
-                scale = dpi / 300
-                new_size = (
-                    max(1, int(image.width * scale)),
-                    max(1, int(image.height * scale)),
-                )
-                image = image.resize(new_size, Image.Resampling.LANCZOS)
+            part += 1
+            current_doc = fitz.open()
 
-            buffer = BytesIO()
-            image.save(
-                buffer,
-                format="JPEG",
-                quality=quality,
-                optimize=True,
-                progressive=True,
-            )
-            buffer.seek(0)
+            current_doc.insert_pdf(doc, from_page=page_index, to_page=page_index)
 
-            page.replace_image(xref=xref, stream=buffer.read())
+    if current_doc.page_count > 0:
+        output_path = output_dir / f"parte_{part}.pdf"
+        current_doc.save(output_path)
+        current_doc.close()
 
-    doc_buffer = BytesIO()
-    doc.save(
-        doc_buffer,
-        garbage=4,
-        use_objstms=1,
-        deflate=True,
-        clean=True,
+    doc.close()
+
+
+# Compress using iloveapi
+
+
+def compress(input_path: str) -> bytes:
+    load_dotenv()
+
+    PUBLIC_KEY = os.getenv("ASTREA_LOGIN")
+    assert PUBLIC_KEY is not None
+
+    r = requests.post(
+        "https://api.ilovepdf.com/v1/auth",
+        json={"public_key": PUBLIC_KEY},
+        timeout=30,
     )
-    doc_buffer.seek(0)
+    r.raise_for_status()
+    token = r.json()["token"]
 
-    return doc_buffer.read()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    r = requests.get(
+        "https://api.ilovepdf.com/v1/start/compress/eu",
+        headers=headers,
+        timeout=30,
+    )
+    r.raise_for_status()
+    data = r.json()
+
+    server = data["server"]
+    task = data["task"]
+
+    with open(input_path, "rb") as f:
+        files = {"file": f}
+        data = {"task": task}
+
+        r = requests.post(
+            f"https://{server}/v1/upload",
+            headers=headers,
+            files=files,
+            data=data,
+            timeout=60,
+        )
+        r.raise_for_status()
+
+    upload_info = r.json()
+    server_filename = upload_info["server_filename"]
+
+    payload = {
+        "task": task,
+        "tool": "compress",
+        "compression_level": "recommended",
+        "files": [
+            {
+                "server_filename": server_filename,
+                "filename": input_path,
+            }
+        ],
+    }
+
+    r = requests.post(
+        f"https://{server}/v1/process",
+        headers=headers,
+        json=payload,
+        timeout=120,
+    )
+    r.raise_for_status()
+
+    r = requests.get(
+        f"https://{server}/v1/download/{task}",
+        headers=headers,
+        timeout=120,
+    )
+    r.raise_for_status()
+
+    return r.content
