@@ -2,6 +2,7 @@ from tkinterdnd2 import TkinterDnD, DND_FILES
 import customtkinter as ctk
 from pdf import save_compressed_files
 from tribunais import TRIBUNAIS
+import threading
 
 
 class App:
@@ -12,7 +13,10 @@ class App:
         self.nome_arq = None
         self.error_msg = None
         self.success_msg = None
-        self.tribunal = ctk.StringVar()
+
+        self.tribunal = ctk.StringVar(value="Nenhum tribunal selecionado")
+
+        self.loading_overlay = None
 
         self.index()
 
@@ -39,11 +43,27 @@ class App:
             command=self.choose_file,
         ).pack(pady=(0, 20))
 
+        # -------- Tribunal selecionado (LABEL DINÂMICA) --------
+
+        ctk.CTkLabel(
+            frame,
+            text="Tribunal selecionado:",
+            font=("Arial", 14),
+        ).pack(pady=(0, 2))
+
+        ctk.CTkLabel(
+            frame,
+            textvariable=self.tribunal,
+            font=("Arial", 14),
+            text_color="#4da6ff",
+        ).pack(pady=(0, 12))
+
+        # -------- Lista de tribunais --------
+
         ctk.CTkLabel(frame, text="Escolha o tribunal", font=("Arial", 16)).pack(
             pady=(0, 8)
         )
 
-        # Lista rolável de tribunais
         list_frame = ctk.CTkScrollableFrame(frame, width=350, height=200)
         list_frame.pack()
 
@@ -59,15 +79,101 @@ class App:
         ctk.CTkButton(
             frame,
             text="Comprimir PDF",
-            command=self.comprimir,
+            command=self.start_compression,
             font=("Arial", 14),
         ).pack(pady=(20, 0))
 
+    # -------- Seleção sem recarregar UI --------
+
     def select_tribunal(self, nome: str) -> None:
         self.tribunal.set(nome)
-        self.success_msg = f"Tribunal selecionado: {nome}"
+
+    # =====================
+    # THREAD + LOADING
+    # =====================
+
+    def start_compression(self) -> None:
+        if not self.nome_arq:
+            self.error_msg = "Selecione um arquivo"
+            self.success_msg = None
+            self.index()
+            return
+
+        if (
+            not self.tribunal.get()
+            or self.tribunal.get() == "Nenhum tribunal selecionado"
+        ):
+            self.error_msg = "Selecione um tribunal"
+            self.success_msg = None
+            self.index()
+            return
+
+        self.show_loading()
+
+        thread = threading.Thread(
+            target=self.run_compression,
+            daemon=True,
+        )
+        thread.start()
+
+    def run_compression(self) -> None:
+        try:
+            output_path = save_compressed_files(
+                self.nome_arq,
+                TRIBUNAIS[self.tribunal.get()].max_pdf_mb,
+            )
+            self.master.after(
+                0,
+                lambda: self.on_compression_success(output_path),
+            )
+        except Exception as e:
+            self.master.after(
+                0,
+                lambda: self.on_compression_error(str(e)),
+            )
+
+    def on_compression_success(self, output_path: str) -> None:
+        self.hide_loading()
+        self.success_msg = f"Arquivo salvo em {output_path}"
         self.error_msg = None
         self.index()
+
+    def on_compression_error(self, msg: str) -> None:
+        self.hide_loading()
+        self.error_msg = msg
+        self.success_msg = None
+        self.index()
+
+    # =====================
+    # LOADING UI
+    # =====================
+
+    def show_loading(self) -> None:
+        self.loading_overlay = ctk.CTkFrame(self.master)
+        self.loading_overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
+
+        box = ctk.CTkFrame(self.loading_overlay, corner_radius=12)
+        box.place(relx=0.5, rely=0.5, anchor="center")
+
+        ctk.CTkLabel(
+            box,
+            text="Comprimindo PDF...",
+            font=("Arial", 18),
+        ).pack(padx=20, pady=(20, 10))
+
+        self.progress = ctk.CTkProgressBar(box, mode="indeterminate", width=250)
+        self.progress.pack(padx=20, pady=(0, 20))
+        self.progress.start()
+
+    def hide_loading(self) -> None:
+        if self.loading_overlay:
+            self.progress.stop()
+            self.loading_overlay.destroy()
+            self.loading_overlay = None
+
+    # =====================
+    # FILE SELECTION
+    # =====================
 
     def choose_file(self) -> None:
         self.hide_all()
@@ -96,34 +202,11 @@ class App:
     def on_drop(self, event) -> None:
         files = self.master.tk.splitlist(event.data)
         self.nome_arq = files[0]
-
         self.index()
 
-    def comprimir(self) -> None:
-        if not self.nome_arq:
-            self.error_msg = "Selecione um arquivo"
-            self.success_msg = None
-            self.index()
-            return
-
-        if not self.tribunal.get():
-            self.error_msg = "Selecione um tribunal"
-            self.success_msg = None
-            self.index()
-            return
-
-        try:
-            output_path = save_compressed_files(
-                self.nome_arq,
-                TRIBUNAIS[self.tribunal.get()].max_pdf_mb,
-            )
-            self.success_msg = f"Arquivo salvo em {output_path}"
-            self.error_msg = None
-        except Exception as e:
-            self.error_msg = str(e)
-            self.success_msg = None
-
-        self.index()
+    # =====================
+    # UTIL
+    # =====================
 
     def show_msg(self, master: ctk.CTkFrame, msg: str, color: str) -> None:
         box = ctk.CTkFrame(master, fg_color=color, corner_radius=8)
