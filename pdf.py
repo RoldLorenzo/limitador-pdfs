@@ -5,8 +5,6 @@ from dotenv import load_dotenv
 from pathlib import Path
 from typing import Optional
 
-MAX_PDF_LIMIT = 5
-
 # Receives the path to a pdf file and a limit in MB and:
 # saves it compressed in the same folder as <file_name>_compressed.pdf if compressing it is sufficient to be under the limt.
 # creates a folder with the sliced compressed pdf such that each slice is under the limit.
@@ -14,15 +12,15 @@ MAX_PDF_LIMIT = 5
 # Returns the path where the result was saved
 
 
-def save_compressed_files(input_path: str) -> str:
+def save_compressed_files(input_path: str, limtit_bytes: float) -> str:
     directory, filename = os.path.split(input_path)
     name, ext = os.path.splitext(filename)
 
     compressed_bytes = compress(input_path)
 
-    if len(compressed_bytes) > MAX_PDF_LIMIT * 1024 * 1024:
-        save_split_pdf(compressed_bytes, MAX_PDF_LIMIT, name)
-        return directory + "/output"
+    if len(compressed_bytes) > limtit_bytes * 1024 * 1024:
+        save_split_pdf(compressed_bytes, limtit_bytes, name)
+        return directory + "/" + name
     else:
         new_filename = f"{name}_compressed{ext}"
 
@@ -62,7 +60,8 @@ def save_split_pdf(
 
         current_size = len(current_doc.tobytes())
 
-        if current_size > max_size_bytes:
+        # Subtract 1MB because the pdf metadata etc makes it slightly bigger
+        if current_size > max_size_bytes - 1:
             current_doc.delete_page(-1)
 
             output_path = output_dir / f"{file_name}_{part}.pdf"

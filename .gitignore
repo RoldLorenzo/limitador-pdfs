@@ -1,5 +1,6 @@
 __pycache__
 *.pdf
 .venv
+.mypy_cache
 
 .env
