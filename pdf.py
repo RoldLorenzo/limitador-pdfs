@@ -60,8 +60,8 @@ def save_split_pdf(
 
         current_size = len(current_doc.tobytes())
 
-        # Subtract 1MB because the pdf metadata etc makes it slightly bigger
-        if current_size > max_size_bytes - 1:
+        # Subtract 0.5MB because the pdf metadata etc makes it slightly bigger
+        if current_size > max_size_bytes - (512 * 1024):
             current_doc.delete_page(-1)
 
             output_path = output_dir / f"{file_name}_{part}.pdf"
