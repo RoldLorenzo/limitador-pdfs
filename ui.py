@@ -3,68 +3,105 @@ import customtkinter as ctk
 from pdf import save_compressed_files
 from tribunais import TRIBUNAIS
 import threading
-
+from typing import Literal, Optional
 
 class App:
     def __init__(self, master: TkinterDnD.Tk) -> None:
         self.master = master
-        self.master.geometry("960x540")
+        self.master.state("zoomed")
 
-        self.nome_arq = None
-        self.error_msg = None
-        self.success_msg = None
-
+        self.message = ctk.StringVar(value="")
         self.tribunal = ctk.StringVar(value="Nenhum tribunal selecionado")
 
-        self.loading_overlay = None
+        self.arquivo_selecionado: Optional[str] = None
+
+        self.index_container = ctk.CTkFrame(self.master, fg_color="transparent")
+        self.loading_container = ctk.CTkFrame(self.master)
 
         self.index()
+        self.loading()
+
+        self.show_index()
+
+    def hide_all(self) -> None:
+        self.index_container.pack_forget()
+        self.loading_container.pack_forget()
+
+    def show_index(self) -> None:
+        self.hide_all()
+        self.index_container.pack(fill="both", expand=True)
+
+    def show_loading(self) -> None:
+        self.hide_all()
+        self.loading_container.pack(fill="both", expand=True)
 
     def index(self) -> None:
-        self.hide_all()
+        # --- ÁREA EXIBIÇÃO MENSAGEM ---
 
-        frame = ctk.CTkFrame(self.master)
-        frame.pack(fill="both", expand=True)
+        self.show_message_frame = ctk.CTkFrame(self.index_container, height=40)
+        self.show_message_frame.pack(fill="x")
 
-        if self.error_msg:
-            self.show_msg(frame, self.error_msg, "#8B0000")
-        elif self.success_msg:
-            self.show_msg(frame, self.success_msg, "#28a745")
+        self.message_box = ctk.CTkFrame(self.show_message_frame, corner_radius=8)
 
-        ctk.CTkLabel(frame, text="Escolha o PDF", font=("Arial", 18)).pack(
-            pady=(40, 10)
-        )
-
-        file_label = self.nome_arq if self.nome_arq else "Nenhum arquivo selecionado"
-        ctk.CTkButton(
-            frame,
-            text=file_label,
+        ctk.CTkLabel(
+            self.message_box,
+            textvariable=self.message,
             font=("Arial", 18),
-            command=self.choose_file,
-        ).pack(pady=(0, 20))
+        ).pack(fill="both", expand=True)
 
-        # -------- Tribunal selecionado (LABEL DINÂMICA) --------
+        # --- FRAME SELEÇÃO ARQUIVO
+
+        self.file_selection_frame = ctk.CTkFrame(self.index_container)
+        self.file_selection_frame.pack(fill="x", pady=30)
+
+        self.escolha_arquivo = ctk.CTkLabel(self.file_selection_frame, text="Escolha um arquivo", font=("Arial", 20))
+        self.escolha_arquivo.pack(pady=10)
+
+        self.dnd_frame = ctk.CTkFrame(
+            self.file_selection_frame,
+            fg_color="transparent",
+            border_width=1,
+            border_color="#777777",
+            corner_radius=10,
+        )
+        self.dnd_frame.pack(padx=30, pady=30)
 
         ctk.CTkLabel(
-            frame,
-            text="Tribunal selecionado:",
-            font=("Arial", 14),
-        ).pack(pady=(0, 2))
+            self.dnd_frame,
+            text="Arraste o arquivo aqui",
+            font=("Arial", 18),
+        ).pack(fill="both", expand=True, padx=20, pady=20)
 
-        ctk.CTkLabel(
-            frame,
-            textvariable=self.tribunal,
-            font=("Arial", 14),
-            text_color="#4da6ff",
-        ).pack(pady=(0, 12))
+        self.dnd_frame.drop_target_register(DND_FILES)
+        self.dnd_frame.dnd_bind("<<Drop>>", self.on_drop)
 
-        # -------- Lista de tribunais --------
-
-        ctk.CTkLabel(frame, text="Escolha o tribunal", font=("Arial", 16)).pack(
-            pady=(0, 8)
+        self.botao_muda_arq = ctk.CTkButton(
+            self.file_selection_frame, font=("Arial", 18),
+            text="Mudar arquivo selecionado",
+            command=self.change_selected_file
         )
 
-        list_frame = ctk.CTkScrollableFrame(frame, width=350, height=200)
+        # --- FRAME ESCOLHA TRIBUNAL ---
+
+        self.tribunal_selection_frame = ctk.CTkFrame(self.index_container)
+        self.tribunal_selection_frame.pack(fill="x")
+
+        ctk.CTkLabel(self.tribunal_selection_frame, text="Escolha o tribunal", font=("Arial", 20)).pack()
+
+        ctk.CTkLabel(
+            self.tribunal_selection_frame,
+            text="Tribunal selecionado:",
+            font=("Arial", 18),
+        ).pack(pady=(10, 0))
+
+        ctk.CTkLabel(
+            self.tribunal_selection_frame,
+            textvariable=self.tribunal,
+            font=("Arial", 18),
+            text_color="#4da6ff",
+        ).pack(pady=(0, 10))
+
+        list_frame = ctk.CTkScrollableFrame(self.tribunal_selection_frame, width=550, height=300)
         list_frame.pack()
 
         for nome in TRIBUNAIS.keys():
@@ -72,40 +109,47 @@ class App:
                 list_frame,
                 text=nome,
                 anchor="w",
-                command=lambda n=nome: self.select_tribunal(n),
+                command=lambda n=nome: self.tribunal.set(n),
             )
             btn.pack(fill="x", pady=2)
 
         ctk.CTkButton(
-            frame,
+            self.index_container,
             text="Comprimir PDF",
             command=self.start_compression,
-            font=("Arial", 14),
-        ).pack(pady=(20, 0))
+            font=("Arial", 18),
+        ).pack(pady=50)
 
-    # -------- Seleção sem recarregar UI --------
+    def show_message(self, msg: str, type: Literal["error", "success"]) -> None:    
+        color = "#8B0000" if type == "error" else "#28a745"
 
-    def select_tribunal(self, nome: str) -> None:
-        self.tribunal.set(nome)
+        self.message_box.configure(fg_color=color)
+        self.message_box.pack(fill="x", padx=20, pady=5)
 
-    # =====================
-    # THREAD + LOADING
-    # =====================
+        self.message.set(msg)
+
+    def hide_message(self) -> None:
+        self.message_box.pack_forget()
+
+    def on_drop(self, event) -> None:
+        files = self.master.tk.splitlist(event.data)
+        self.arquivo_selecionado = files[0]
+
+        self.dnd_frame.pack_forget()
+        self.escolha_arquivo.pack_forget()
+
+        self.label_selecionado = ctk.CTkLabel(self.file_selection_frame, text=f"Arquivo selecionado:\n{self.arquivo_selecionado}", font=("Arial", 20))
+        self.label_selecionado.pack(pady=10)
+
+        self.botao_muda_arq.pack(pady=10)
 
     def start_compression(self) -> None:
-        if not self.nome_arq:
-            self.error_msg = "Selecione um arquivo"
-            self.success_msg = None
-            self.index()
+        if not self.arquivo_selecionado:
+            self.show_message("Selecione um arquivo", "error")
             return
 
-        if (
-            not self.tribunal.get()
-            or self.tribunal.get() == "Nenhum tribunal selecionado"
-        ):
-            self.error_msg = "Selecione um tribunal"
-            self.success_msg = None
-            self.index()
+        if not self.tribunal.get() or self.tribunal.get() == "Nenhum tribunal selecionado":
+            self.show_message("Selecione um tribunal", "error")
             return
 
         self.show_loading()
@@ -119,41 +163,26 @@ class App:
     def run_compression(self) -> None:
         try:
             output_path = save_compressed_files(
-                self.nome_arq,
+                self.arquivo_selecionado,
                 TRIBUNAIS[self.tribunal.get()].max_pdf_mb,
             )
-            self.master.after(
-                0,
-                lambda: self.on_compression_success(output_path),
-            )
+            self.show_message(f"Arquivo salvo em {output_path}", "success")
         except Exception as e:
-            self.master.after(
-                0,
-                lambda: self.on_compression_error(str(e)),
-            )
+            self.show_message(str(e), "error")
 
-    def on_compression_success(self, output_path: str) -> None:
-        self.hide_loading()
-        self.success_msg = f"Arquivo salvo em {output_path}"
-        self.error_msg = None
-        self.index()
+        self.change_selected_file()
+        self.show_index()
 
-    def on_compression_error(self, msg: str) -> None:
-        self.hide_loading()
-        self.error_msg = msg
-        self.success_msg = None
-        self.index()
+    def change_selected_file(self) -> None:
+        self.label_selecionado.pack_forget()
+        self.botao_muda_arq.pack_forget()
 
-    # =====================
-    # LOADING UI
-    # =====================
+        self.escolha_arquivo.pack(pady=10)
+        self.dnd_frame.pack(padx=30, pady=30)
 
-    def show_loading(self) -> None:
-        self.loading_overlay = ctk.CTkFrame(self.master)
-        self.loading_overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
-
-        box = ctk.CTkFrame(self.loading_overlay, corner_radius=12)
-        box.place(relx=0.5, rely=0.5, anchor="center")
+    def loading(self) -> None:
+        box = ctk.CTkFrame(self.loading_container, corner_radius=12)
+        box.pack(expand=True)
 
         ctk.CTkLabel(
             box,
@@ -161,63 +190,6 @@ class App:
             font=("Arial", 18),
         ).pack(padx=20, pady=(20, 10))
 
-        self.progress = ctk.CTkProgressBar(box, mode="indeterminate", width=250)
-        self.progress.pack(padx=20, pady=(0, 20))
-        self.progress.start()
-
-    def hide_loading(self) -> None:
-        if self.loading_overlay:
-            self.progress.stop()
-            self.loading_overlay.destroy()
-            self.loading_overlay = None
-
-    # =====================
-    # FILE SELECTION
-    # =====================
-
-    def choose_file(self) -> None:
-        self.hide_all()
-
-        frame = ctk.CTkFrame(self.master)
-        frame.pack(fill="both", expand=True)
-
-        dnd_frame = ctk.CTkFrame(
-            frame,
-            fg_color="transparent",
-            border_width=1,
-            border_color="#777777",
-            corner_radius=10,
-        )
-        dnd_frame.pack(fill="both", expand=True, padx=30, pady=30)
-
-        ctk.CTkLabel(
-            dnd_frame,
-            text="Arraste o arquivo aqui",
-            font=("Arial", 18),
-        ).pack(fill="both", expand=True, padx=20, pady=20)
-
-        dnd_frame.drop_target_register(DND_FILES)
-        dnd_frame.dnd_bind("<<Drop>>", self.on_drop)
-
-    def on_drop(self, event) -> None:
-        files = self.master.tk.splitlist(event.data)
-        self.nome_arq = files[0]
-        self.index()
-
-    # =====================
-    # UTIL
-    # =====================
-
-    def show_msg(self, master: ctk.CTkFrame, msg: str, color: str) -> None:
-        box = ctk.CTkFrame(master, fg_color=color, corner_radius=8)
-        box.pack(fill="x", padx=20, pady=5)
-
-        ctk.CTkLabel(
-            box,
-            text=msg,
-            font=("Arial", 18),
-        ).pack(fill="both", expand=True)
-
-    def hide_all(self) -> None:
-        for widget in self.master.winfo_children():
-            widget.destroy()
+        progress = ctk.CTkProgressBar(box, mode="indeterminate", width=250)
+        progress.pack(padx=20, pady=(0, 20))
+        progress.start()
